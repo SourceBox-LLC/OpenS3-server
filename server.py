@@ -21,6 +21,10 @@ from datetime import datetime
 import secrets
 import string
 
+# Load environment variables
+from dotenv import load_dotenv
+load_dotenv()  # This will load variables from .env file
+
 # Third-party imports
 from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Header, Query
 from fastapi.responses import FileResponse, JSONResponse
@@ -42,15 +46,14 @@ app = FastAPI(
 # ============================================================================
 
 # Security configuration
-# In a production environment, you should use environment variables or a proper
-# secrets management system rather than hardcoding credentials
+# Use environment variables from .env file
 security = HTTPBasic()
-USERNAME = "admin"  # Default username for HTTP Basic Auth
-PASSWORD = "password"  # Default password for HTTP Basic Auth
+USERNAME = os.getenv("USERNAME", "admin")  # Fallback to default if not set
+PASSWORD = os.getenv("PASSWORD", "password")  # Fallback to default if not set
 
 # Storage configuration
 # This determines where bucket directories and object files will be stored
-BASE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "storage")
+BASE_DIR = os.getenv("BASE_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "storage"))
 # Ensure the storage directory exists
 os.makedirs(BASE_DIR, exist_ok=True)
 

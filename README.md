@@ -71,18 +71,32 @@ Local S3 serves several important purposes for developers:
 2. Set up a virtual environment (recommended):
    ```bash
    # On Windows
-   python -m venv venv
-   venv\Scripts\activate
+   python -m venv .venv
+   .venv\Scripts\activate
    
    # On macOS/Linux
-   python3 -m venv venv
-   source venv/bin/activate
+   python3 -m venv .venv
+   source .venv/bin/activate
    ```
+   
+   Note: If you encounter issues with the virtual environment, try deactivating any existing environment first with `deactivate`.
 
 3. Install the required dependencies:
    ```bash
+   # The -r flag is required when installing from a requirements file
    pip install -r requirements.txt
    ```
+   
+   Note: If you encounter pip installation issues, you can also try:
+   ```bash
+   python -m pip install -r requirements.txt
+   ```
+
+4. Run the setup script to configure authentication:
+   ```bash
+   python setup.py
+   ```
+   This will create a `.env` file with your custom username and password.
 
 ### Option 2: Docker Installation
 
@@ -91,10 +105,18 @@ Local S3 serves several important purposes for developers:
    docker build -t local-s3 .
    ```
 
-2. Run the container:
+2. Create a `.env` file with your desired credentials (as outlined in Option 1, step 4)
+
+3. Run the container with environment variables:
    ```bash
-   docker run -p 8000:8000 -v $(pwd)/storage:/app/storage local-s3
+   # On Linux/macOS
+   docker run -p 8000:8000 -v $(pwd)/storage:/app/storage --env-file .env local-s3
+   
+   # On Windows PowerShell
+   docker run -p 8000:8000 -v ${PWD}/storage:/app/storage --env-file .env local-s3
    ```
+   
+   This mounts the local storage directory and passes your authentication credentials to the container.
 
 ## Getting Started
 
@@ -127,15 +149,22 @@ All API endpoints are protected with HTTP Basic Authentication:
 - **Default Username**: `admin`
 - **Default Password**: `password`
 
-You can modify these credentials in the `server.py` file by changing the `USERNAME` and `PASSWORD` variables.
+You can modify these credentials by running the setup script:
+```bash
+python setup.py
+```
+
+This will create a `.env` file with your custom credentials. You can also manually create or edit the `.env` file following the format in `.env.example`.
 
 ### Configuration
 
-The following configuration parameters can be adjusted in `server.py`:
+The following configuration parameters can be set in the `.env` file:
 
+- **USERNAME**: Username for HTTP Basic Authentication
+- **PASSWORD**: Password for HTTP Basic Authentication
 - **BASE_DIR**: Storage location for buckets and objects (default: `./storage`)
-- **USERNAME/PASSWORD**: Authentication credentials
-- **Host/Port**: When running directly (default: `0.0.0.0:8000`)
+
+Other settings like Host/Port can be adjusted when running the server (default: `0.0.0.0:8000`)
 
 ### Storage Location
 
