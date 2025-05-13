@@ -1,4 +1,4 @@
-# Local S3
+# OpenS3 Server
 
 > **IMPORTANT**: An [OpenS3 SDK](https://github.com/SourceBox-LLC/OpenS3-SDK.git) is available for easier integration with this service. The SDK provides a boto3-like interface for interacting with OpenS3.
 
