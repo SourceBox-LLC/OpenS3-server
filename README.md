@@ -113,7 +113,13 @@ Local S3 serves several important purposes for developers:
    docker run -p 8000:8000 -v $(pwd)/storage:/app/storage --env-file .env local-s3
    
    # On Windows PowerShell
-   docker run -p 8000:8000 -v ${PWD}/storage:/app/storage --env-file .env local-s3
+   docker run -p 8000:8000 -v %cd%/storage:/app/storage --env-file .env local-s3
+   
+   # On Windows Command Prompt
+   docker run -p 8000:8000 -v %cd%/storage:/app/storage --env-file .env local-s3
+   
+   # Alternative with absolute path (all platforms)
+   docker run -p 8000:8000 -v /absolute/path/to/storage:/app/storage --env-file .env local-s3
    ```
    
    This mounts the local storage directory and passes your authentication credentials to the container.
