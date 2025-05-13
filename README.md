@@ -154,7 +154,7 @@ You can modify these credentials by running the setup script:
 python setup.py
 ```
 
-This will create a `.env` file with your custom credentials. You can also manually create or edit the `.env` file following the format in `.env.example`.
+This will create a `.env` file with your custom credentials. You can also manually create or edit the `.env` file following the format in `.env`.
 
 ### Configuration
 
