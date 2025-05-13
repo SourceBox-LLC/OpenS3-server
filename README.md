@@ -1,6 +1,8 @@
 # OpenS3 Server
 
 > **IMPORTANT**: An [OpenS3 SDK](https://github.com/SourceBox-LLC/OpenS3-SDK.git) is available for easier integration with this service. The SDK provides a boto3-like interface for interacting with OpenS3.
+>
+> A user-friendly [OpenS3 GUI](https://github.com/SourceBox-LLC/OpenS3-GUI) is also available, providing a graphical interface for managing buckets and objects in your OpenS3 server.
 
 A Python implementation of an Amazon S3-like service that runs locally using FastAPI, perfect for development and testing environments.
 
