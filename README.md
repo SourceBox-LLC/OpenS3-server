@@ -64,8 +64,8 @@ Local S3 serves several important purposes for developers:
 
 1. Clone the repository or download the source code:
    ```bash
-   git clone https://github.com/yourusername/local-s3.git
-   cd local-s3
+   git clone https://github.com/SourceBox-LLC/OpenS3-server.git
+   cd OpenS3-server
    ```
 
 2. Set up a virtual environment (recommended):
