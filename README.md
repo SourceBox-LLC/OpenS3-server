@@ -252,7 +252,7 @@ Most HTTP clients and libraries handle this automatically when you provide auth 
   ```
 - **Error Responses**:
   - `404 Not Found`: Bucket does not exist
-  - `409 Conflict`: Bucket is not empty
+  - `409 Conflict`: Bucket is not empty (provides detailed explanation and guidance)
   - `401 Unauthorized`: Invalid credentials
 
 ### Object Operations
@@ -739,11 +739,19 @@ If you plan to eventually move from Local S3 to AWS S3:
 - Check file permissions
 - Verify you're using the correct Content-Type for multipart form uploads
 
+#### Bucket Deletion Fails
+
+- **Bucket Not Empty**: The most common reason for bucket deletion failure is that the bucket still contains objects. The server will return a detailed error message (409 Conflict) explaining that all objects must be deleted before the bucket can be removed.
+- **Metadata Files**: Even if you've deleted all visible objects, there may be metadata files remaining. The server automatically handles these during bucket deletion.
+- **Permission Issues**: Ensure you have write access to the bucket directory to delete it.
+
 ### Debugging
 
 1. **Enable Verbose Logging**: Modify the server to increase log verbosity
 2. **Check Storage Directory**: Examine the physical files to verify storage operations
 3. **Use API Documentation**: The Swagger UI at `/docs` can help diagnose issues
+4. **Error Messages**: The server provides detailed error messages for common operations. For example, when attempting to delete a non-empty bucket, the error will explain that all objects must be deleted first.
+5. **SDK Integration**: When using the OpenS3 SDK (version 0.1.6+), detailed error information is captured and can be accessed through exception handling.
 
 ## Limitations
 
