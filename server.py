@@ -268,9 +268,22 @@ async def delete_bucket(bucket_name: str, username: str = Depends(verify_credent
     if not bucket_exists(bucket_name):
         raise HTTPException(status_code=404, detail=f"Bucket {bucket_name} not found")
     
-    # Check if bucket is empty (S3 requires buckets to be empty before deletion)
-    if os.listdir(bucket_path):
-        raise HTTPException(status_code=409, detail=f"Bucket {bucket_name} is not empty")
+    # Check if bucket contains any objects (excluding metadata files)
+    has_objects = False
+    for filename in os.listdir(bucket_path):
+        # Skip metadata files when checking if bucket is empty
+        if not filename.endswith('.metadata'):
+            has_objects = True
+            break
+    
+    if has_objects:
+        raise HTTPException(status_code=409, detail=f"Bucket {bucket_name} still contains objects")
+    
+    # Delete all files in the bucket (including metadata files)
+    for filename in os.listdir(bucket_path):
+        file_path = os.path.join(bucket_path, filename)
+        if os.path.isfile(file_path):
+            os.remove(file_path)
     
     # Delete the bucket directory
     os.rmdir(bucket_path)
