@@ -26,7 +26,7 @@ from dotenv import load_dotenv
 load_dotenv()  # This will load variables from .env file
 
 # Third-party imports
-from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Header, Query
+from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Header, Query, Form
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
@@ -285,7 +285,8 @@ async def upload_object(
     bucket_name: str, 
     file: UploadFile = File(...), 
     username: str = Depends(verify_credentials),
-    content_type: Optional[str] = Header(None)
+    content_type: Optional[str] = Header(None),
+    json: Optional[str] = Form(None)
 ):
     """Upload an object to a bucket
     
@@ -297,6 +298,7 @@ async def upload_object(
         file: The uploaded file (from multipart/form-data)
         username: The authenticated username (from dependency)
         content_type: Optional content type header (will use file.content_type if not provided)
+        json: Optional JSON string containing metadata and other parameters
         
     Returns:
         Object metadata with 201 Created status
@@ -319,12 +321,28 @@ async def upload_object(
     # In a real S3 implementation, this would be stored in a database or metadata file
     object_size = os.path.getsize(object_path)
     
+    # Process metadata if provided
+    metadata = {}
+    if json:
+        try:
+            json_data = __import__('json').loads(json)
+            if 'metadata' in json_data:
+                metadata = json_data['metadata']
+                
+                # Save metadata to a sidecar file
+                metadata_path = object_path + '.metadata'
+                with open(metadata_path, 'w') as f:
+                    __import__('json').dump(metadata, f)
+        except Exception as e:
+            print(f"Error processing metadata: {e}")
+    
     # Return metadata about the uploaded object
     return {
         "key": object_key,
         "size": object_size,
         "bucket": bucket_name,
-        "content_type": content_type or file.content_type
+        "content_type": content_type or file.content_type,
+        "metadata": metadata
     }
 
 @app.get("/buckets/{bucket_name}/objects", response_model=ObjectList)
