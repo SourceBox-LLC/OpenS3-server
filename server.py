@@ -375,16 +375,34 @@ async def list_objects(
     bucket_path = get_bucket_path(bucket_name)
     objects = []
     
+    print(f"DEBUG: Listing objects in bucket '{bucket_name}' at path: {bucket_path}")
+    
+    # Check if the bucket directory exists
+    if not os.path.exists(bucket_path):
+        print(f"DEBUG: Bucket directory does not exist: {bucket_path}")
+        return ObjectList(objects=[])
+    
+    # List all files in the bucket directory
+    try:
+        all_files = os.listdir(bucket_path)
+        print(f"DEBUG: All files found: {all_files}")
+    except Exception as e:
+        print(f"DEBUG: Error listing files: {e}")
+        return ObjectList(objects=[])
+    
     # Scan the bucket directory for files
-    for object_name in os.listdir(bucket_path):
+    for object_name in all_files:
         object_path = os.path.join(bucket_path, object_name)
+        print(f"DEBUG: Processing file: {object_name} at {object_path}")
         
         # Skip metadata sidecar files
         if object_name.endswith('.metadata'):
+            print(f"DEBUG: Skipping metadata file: {object_name}")
             continue
             
         # Filter by prefix if provided (simulates S3's directory-like structure)
         if prefix and not object_name.startswith(prefix):
+            print(f"DEBUG: Skipping file not matching prefix '{prefix}': {object_name}")
             continue
             
         # Only include files, not directories
