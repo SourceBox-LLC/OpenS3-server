@@ -114,7 +114,7 @@ def verify_credentials(credentials: HTTPBasicCredentials = Depends(security)):
     if not (is_username_correct and is_password_correct):
         raise HTTPException(
             status_code=401,
-            detail="Invalid credentials",
+            detail="Authentication failed. Invalid username or password. Please check your credentials and try again.",
             headers={"WWW-Authenticate": "Basic"},  # Prompt browser to show login dialog
         )
     return credentials.username
@@ -214,11 +214,32 @@ async def create_bucket(bucket: BucketRequest, username: str = Depends(verify_cr
     
     # Check if bucket already exists
     if os.path.exists(bucket_path):
-        raise HTTPException(status_code=409, detail=f"Bucket {bucket.name} already exists")
+        raise HTTPException(
+            status_code=409, 
+            detail=f"Bucket '{bucket.name}' already exists. Choose a unique bucket name for creation."
+        )
     
     # Create the bucket directory
-    os.makedirs(bucket_path)
-    return {"message": f"Bucket {bucket.name} created successfully"}
+    try:
+        os.makedirs(bucket_path)
+        print(f"DEBUG: Successfully created bucket directory for '{bucket.name}' at {bucket_path}")
+        return {
+            "message": f"Bucket '{bucket.name}' created successfully",
+            "bucket": bucket.name,
+            "creation_date": datetime.now().isoformat()
+        }
+    except PermissionError:
+        print(f"ERROR: Permission denied when creating bucket '{bucket.name}' at {bucket_path}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Permission denied: Cannot create bucket '{bucket.name}'. Please check storage directory permissions."
+        )
+    except Exception as e:
+        print(f"ERROR: Failed to create bucket '{bucket.name}': {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to create bucket '{bucket.name}': {str(e)}"
+        )
 
 @app.get("/buckets", response_model=BucketList)
 async def list_buckets(username: str = Depends(verify_credentials)):
@@ -277,7 +298,10 @@ async def delete_bucket(bucket_name: str, username: str = Depends(verify_credent
             break
     
     if has_objects:
-        raise HTTPException(status_code=409, detail=f"Bucket {bucket_name} still contains objects")
+        raise HTTPException(
+            status_code=409, 
+            detail=f"Bucket {bucket_name} cannot be deleted because it still contains objects. Delete all objects from the bucket first before attempting to delete the bucket."
+        )
     
     # Delete all files in the bucket (including metadata files)
     for filename in os.listdir(bucket_path):
@@ -327,8 +351,16 @@ async def upload_object(
     object_path = get_object_path(bucket_name, object_key)
     
     # Save the file to the filesystem
-    with open(object_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    try:
+        with open(object_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        print(f"DEBUG: Successfully saved object '{object_key}' to bucket '{bucket_name}'")
+    except Exception as e:
+        print(f"DEBUG: Error saving object file: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to upload '{object_key}' to bucket '{bucket_name}': {str(e)}"
+        )
     
     # Get metadata from the saved file
     # In a real S3 implementation, this would be stored in a database or metadata file
@@ -346,8 +378,13 @@ async def upload_object(
                 metadata_path = object_path + '.metadata'
                 with open(metadata_path, 'w') as f:
                     __import__('json').dump(metadata, f)
+                print(f"DEBUG: Successfully saved metadata for object '{object_key}' in bucket '{bucket_name}'")
+        except json.JSONDecodeError as e:
+            print(f"DEBUG: Invalid JSON metadata for object '{object_key}': {e}")
+            # Don't fail the upload, just log the error and continue without metadata
         except Exception as e:
-            print(f"Error processing metadata: {e}")
+            print(f"DEBUG: Error processing metadata for '{object_key}': {e}")
+            # Continue without metadata
     
     # Return metadata about the uploaded object
     return {
@@ -393,6 +430,8 @@ async def list_objects(
     # Check if the bucket directory exists
     if not os.path.exists(bucket_path):
         print(f"DEBUG: Bucket directory does not exist: {bucket_path}")
+        # Still return a valid empty list but log the issue
+        print(f"WARNING: Request to list objects in non-existent bucket path: {bucket_path}")
         return ObjectList(objects=[])
     
     # List all files in the bucket directory
@@ -468,19 +507,43 @@ async def head_object(
     object_path = get_object_path(bucket_name, object_key)
     
     # Get basic metadata from the file
-    size = os.path.getsize(object_path)
-    last_modified = datetime.fromtimestamp(os.path.getmtime(object_path)).isoformat()
-    
-    # Determine content type (more sophisticated MIME type detection could be implemented)
-    content_type = "application/octet-stream"
-    
-    # Return object metadata
-    return {
-        "key": object_key,
-        "size": size,
-        "last_modified": last_modified,
-        "content_type": content_type
-    }
+    try:
+        print(f"DEBUG: Retrieving HEAD metadata for object '{object_key}' in bucket '{bucket_name}'")
+        
+        size = os.path.getsize(object_path)
+        last_modified = datetime.fromtimestamp(os.path.getmtime(object_path)).isoformat()
+        
+        # Attempt to determine content type based on extension
+        import mimetypes
+        content_type = mimetypes.guess_type(object_path)[0] or "application/octet-stream"
+        
+        # Check for metadata file
+        metadata = {}
+        metadata_path = object_path + '.metadata'
+        if os.path.exists(metadata_path):
+            try:
+                with open(metadata_path, 'r') as f:
+                    metadata = json.load(f)
+                print(f"DEBUG: Successfully loaded metadata for '{object_key}'")
+            except Exception as e:
+                print(f"DEBUG: Error reading metadata for HEAD request: {e}")
+        
+        # Return enhanced object metadata
+        print(f"DEBUG: HEAD request for '{object_key}' completed successfully")
+        return {
+            "key": object_key,
+            "size": size,
+            "last_modified": last_modified,
+            "content_type": content_type,
+            "metadata": metadata,
+            "etag": f"\"md5-{hash(object_key + str(size) + last_modified)}\""
+        }
+    except Exception as e:
+        print(f"ERROR: Failed to get HEAD metadata for '{object_key}': {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retrieve metadata for object '{object_key}' in bucket '{bucket_name}': {str(e)}"
+        )
 
 @app.get("/buckets/{bucket_name}/objects/{object_key}/metadata")
 async def get_object_metadata(
@@ -520,8 +583,12 @@ async def get_object_metadata(
         try:
             with open(metadata_path, 'r') as f:
                 metadata = json.load(f)
+        except json.JSONDecodeError as e:
+            print(f"DEBUG: Invalid JSON in metadata file for '{object_key}': {e}")
+            metadata = {"error": "Metadata file exists but contains invalid JSON format"}
         except Exception as e:
-            print(f"Error reading metadata file: {e}")
+            print(f"DEBUG: Error reading metadata file for '{object_key}': {e}")
+            metadata = {"error": f"Error accessing metadata: {str(e)}"}
     
     # Return metadata
     return {
@@ -552,17 +619,32 @@ async def download_object(
     """
     # Verify bucket exists
     if not bucket_exists(bucket_name):
-        raise HTTPException(status_code=404, detail=f"Bucket {bucket_name} not found")
+        raise HTTPException(status_code=404, detail=f"Bucket '{bucket_name}' not found. Please ensure the bucket exists and try again.")
     
     object_path = get_object_path(bucket_name, object_key)
     
     # Verify object exists
     if not object_exists(bucket_name, object_key):
-        raise HTTPException(status_code=404, detail=f"Object {object_key} not found in bucket {bucket_name}")
+        raise HTTPException(status_code=404, detail=f"Object '{object_key}' not found in bucket '{bucket_name}'. Please ensure the object exists and try again.")
     
     # Return file as a download response with appropriate headers
-    # FastAPI will automatically set Content-Type based on the file extension
-    return FileResponse(path=object_path, filename=object_key)
+    try:
+        # Log download attempt
+        print(f"DEBUG: Attempting to download object '{object_key}' from bucket '{bucket_name}'")
+        
+        # Check if file is readable before returning
+        if not os.access(object_path, os.R_OK):
+            raise PermissionError(f"Object file exists but is not readable: {object_path}")
+            
+        # FastAPI will automatically set Content-Type based on the file extension
+        print(f"DEBUG: Successfully serving download for '{object_key}'")
+        return FileResponse(path=object_path, filename=object_key)
+    except Exception as e:
+        print(f"ERROR: Failed to serve file '{object_key}': {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to download object '{object_key}' from bucket '{bucket_name}': {str(e)}"
+        )
 
 @app.delete("/buckets/{bucket_name}/objects/{object_key}")
 async def delete_object(
@@ -593,11 +675,27 @@ async def delete_object(
     
     # Verify object exists
     if not object_exists(bucket_name, object_key):
-        raise HTTPException(status_code=404, detail=f"Object {object_key} not found in bucket {bucket_name}")
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Object '{object_key}' not found in bucket '{bucket_name}'. Please verify that both the object key and bucket name are correct."
+        )
     
-    # Delete the file from the filesystem
+    # Delete metadata file if it exists
+    metadata_path = object_path + '.metadata'
+    if os.path.exists(metadata_path):
+        try:
+            os.remove(metadata_path)
+            print(f"DEBUG: Deleted metadata file for object '{object_key}' in bucket '{bucket_name}'")
+        except Exception as e:
+            print(f"DEBUG: Error deleting metadata file: {e}")
+    
+    # Delete the object file from the filesystem
     os.remove(object_path)
-    return {"message": f"Object {object_key} deleted successfully from bucket {bucket_name}"}
+    return {
+        "message": f"Object '{object_key}' deleted successfully from bucket '{bucket_name}'", 
+        "bucket": bucket_name,
+        "key": object_key
+    }
 
 # ============================================================================
 # SERVER ENTRY POINT
