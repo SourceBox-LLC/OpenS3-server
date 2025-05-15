@@ -400,6 +400,99 @@ async def list_objects(
     
     return ObjectList(objects=objects)
 
+@app.head("/buckets/{bucket_name}/objects/{object_key}")
+async def head_object(
+    bucket_name: str, 
+    object_key: str,
+    username: str = Depends(verify_credentials)
+):
+    """Get metadata for an object without downloading it
+    
+    Similar to the S3 HeadObject operation. Returns metadata about an object
+    without downloading its contents.
+    
+    Args:
+        bucket_name: The bucket containing the object
+        object_key: The key (filename) of the object
+        username: The authenticated username (from dependency)
+        
+    Returns:
+        Object metadata
+        
+    Raises:
+        HTTPException: 404 if bucket or object doesn't exist
+    """
+    # Verify bucket exists
+    if not bucket_exists(bucket_name):
+        raise HTTPException(status_code=404, detail=f"Bucket {bucket_name} not found")
+    
+    # Verify object exists
+    if not object_exists(bucket_name, object_key):
+        raise HTTPException(status_code=404, detail=f"Object {object_key} not found")
+    
+    object_path = get_object_path(bucket_name, object_key)
+    
+    # Get basic metadata from the file
+    size = os.path.getsize(object_path)
+    last_modified = datetime.fromtimestamp(os.path.getmtime(object_path)).isoformat()
+    
+    # Determine content type (more sophisticated MIME type detection could be implemented)
+    content_type = "application/octet-stream"
+    
+    # Return object metadata
+    return {
+        "key": object_key,
+        "size": size,
+        "last_modified": last_modified,
+        "content_type": content_type
+    }
+
+@app.get("/buckets/{bucket_name}/objects/{object_key}/metadata")
+async def get_object_metadata(
+    bucket_name: str, 
+    object_key: str,
+    username: str = Depends(verify_credentials)
+):
+    """Get metadata for an object
+    
+    Returns the metadata associated with an object.
+    
+    Args:
+        bucket_name: The bucket containing the object
+        object_key: The key (filename) of the object
+        username: The authenticated username (from dependency)
+        
+    Returns:
+        Object metadata
+        
+    Raises:
+        HTTPException: 404 if bucket or object doesn't exist
+    """
+    # Verify bucket exists
+    if not bucket_exists(bucket_name):
+        raise HTTPException(status_code=404, detail=f"Bucket {bucket_name} not found")
+    
+    # Verify object exists
+    if not object_exists(bucket_name, object_key):
+        raise HTTPException(status_code=404, detail=f"Object {object_key} not found")
+    
+    object_path = get_object_path(bucket_name, object_key)
+    metadata_path = object_path + '.metadata'
+    
+    # Check if metadata file exists
+    metadata = {}
+    if os.path.exists(metadata_path):
+        try:
+            with open(metadata_path, 'r') as f:
+                metadata = json.load(f)
+        except Exception as e:
+            print(f"Error reading metadata file: {e}")
+    
+    # Return metadata
+    return {
+        "metadata": metadata
+    }
+
 @app.get("/buckets/{bucket_name}/objects/{object_key}")
 async def download_object(
     bucket_name: str, 
