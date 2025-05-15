@@ -379,6 +379,10 @@ async def list_objects(
     for object_name in os.listdir(bucket_path):
         object_path = os.path.join(bucket_path, object_name)
         
+        # Skip metadata sidecar files
+        if object_name.endswith('.metadata'):
+            continue
+            
         # Filter by prefix if provided (simulates S3's directory-like structure)
         if prefix and not object_name.startswith(prefix):
             continue
