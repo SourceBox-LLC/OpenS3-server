@@ -29,6 +29,7 @@ load_dotenv()  # This will load variables from .env file
 from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Header, Query, Form
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
 
@@ -41,6 +42,15 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
+# Add CORS middleware to allow cross-origin requests from the GUI
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, you should specify the exact origins
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
@@ -48,8 +58,12 @@ app = FastAPI(
 # Security configuration
 # Use environment variables from .env file
 security = HTTPBasic()
-USERNAME = os.getenv("USERNAME", "admin")  # Fallback to default if not set
-PASSWORD = os.getenv("PASSWORD", "password")  # Fallback to default if not set
+# Note: 'USERNAME' is a reserved environment variable in Windows, so we're using S3_USERNAME instead
+USERNAME = os.getenv("S3_USERNAME", "admin")  # Fallback to default if not set
+PASSWORD = os.getenv("S3_PASSWORD", "password")  # Fallback to default if not set
+
+# Print credentials for debugging
+print(f"Using authentication credentials: {USERNAME} / {PASSWORD}")
 
 # Storage configuration
 # This determines where bucket directories and object files will be stored
@@ -703,11 +717,10 @@ async def delete_object(
 
 # This block is executed when the script is run directly
 if __name__ == "__main__":
-    # Start the Uvicorn ASGI server
-    # - host="0.0.0.0" makes the server accessible from any network interface
-    # - port=8000 is the default FastAPI port
-    # - reload=True enables auto-reloading when code changes (development mode)
-    print(f"Starting Local S3 server on http://0.0.0.0:8000")
-    print(f"API documentation available at http://localhost:8000/docs")
+    port = 8001  # Changed port to avoid conflict with OpenAthena
+    print(f"Starting Local S3 server on http://0.0.0.0:{port}")
+    print(f"API documentation available at http://localhost:{port}/docs")
     print(f"Storage location: {BASE_DIR}")
-    uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True)
+    
+    # Start the server with uvicorn
+    uvicorn.run("server:app", host="0.0.0.0", port=port, reload=True)
