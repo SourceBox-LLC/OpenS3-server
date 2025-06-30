@@ -58,12 +58,13 @@ app.add_middleware(
 # Security configuration
 # Use environment variables from .env file
 security = HTTPBasic()
-# Note: 'USERNAME' is a reserved environment variable in Windows, so we're using S3_USERNAME instead
-USERNAME = os.getenv("S3_USERNAME", "admin")  # Fallback to default if not set
-PASSWORD = os.getenv("S3_PASSWORD", "password")  # Fallback to default if not set
+# Support both OpenAthena-style and direct environment variables
+USERNAME = os.getenv("OPENS3_ACCESS_KEY", os.getenv("S3_USERNAME", "admin"))  # Try OpenAthena var first, then S3, then default
+PASSWORD = os.getenv("OPENS3_SECRET_KEY", os.getenv("S3_PASSWORD", "password"))  # Try OpenAthena var first, then S3, then default
 
 # Print credentials for debugging
 print(f"Using authentication credentials: {USERNAME} / {PASSWORD}")
+print(f"Environment variables checked: OPENS3_ACCESS_KEY, S3_USERNAME, OPENS3_SECRET_KEY, S3_PASSWORD")
 
 # Storage configuration
 # This determines where bucket directories and object files will be stored
@@ -279,6 +280,30 @@ async def list_buckets(username: str = Depends(verify_credentials)):
             buckets.append(Bucket(name=bucket_name, creation_date=creation_date))
     
     return BucketList(buckets=buckets)
+
+@app.head("/buckets/{bucket_name}")
+async def head_bucket(bucket_name: str, username: str = Depends(verify_credentials)):
+    """Check if a bucket exists
+    
+    Similar to the S3 HeadBucket operation. Checks if a bucket exists and if
+    the caller has permission to access it.
+    
+    Args:
+        bucket_name: The name of the bucket to check
+        username: The authenticated username (from dependency)
+        
+    Returns:
+        An empty response with 200 OK status if the bucket exists
+        
+    Raises:
+        HTTPException: 404 if bucket doesn't exist
+    """
+    # Verify bucket exists
+    if not bucket_exists(bucket_name):
+        raise HTTPException(status_code=404, detail=f"Bucket {bucket_name} not found")
+    
+    # If we got here, the bucket exists and the user has permission to access it
+    return {"message": f"Bucket {bucket_name} exists"}
 
 @app.delete("/buckets/{bucket_name}")
 async def delete_bucket(bucket_name: str, username: str = Depends(verify_credentials)):
