@@ -159,7 +159,11 @@ def get_object_path(bucket_name: str, object_key: str) -> str:
     Returns:
         The absolute path to the object file
     """
-    return os.path.join(get_bucket_path(bucket_name), object_key)
+    bucket_path = get_bucket_path(bucket_name)
+    
+    # Handle objects in subdirectories
+    # object_key could be like "dir1/dir2/file.txt"
+    return os.path.join(bucket_path, object_key)
 
 def bucket_exists(bucket_name: str) -> bool:
     """Check if a bucket exists
@@ -184,7 +188,18 @@ def object_exists(bucket_name: str, object_key: str) -> bool:
         True if the object exists in the bucket, False otherwise
     """
     object_path = get_object_path(bucket_name, object_key)
-    return os.path.exists(object_path) and os.path.isfile(object_path)
+    print(f"DEBUG: Checking if object exists at: {object_path}")
+    
+    # Ensure any parent directories in the path exist
+    parent_dir = os.path.dirname(object_path)
+    if not os.path.exists(parent_dir):
+        print(f"DEBUG: Parent directory does not exist: {parent_dir}")
+        return False
+        
+    # Check if the object file exists
+    exists = os.path.exists(object_path) and os.path.isfile(object_path)
+    print(f"DEBUG: Object {'exists' if exists else 'does not exist'} at {object_path}")
+    return exists
 
 # ============================================================================
 # API ROUTES
@@ -306,7 +321,7 @@ async def head_bucket(bucket_name: str, username: str = Depends(verify_credentia
     return {"message": f"Bucket {bucket_name} exists"}
 
 @app.delete("/buckets/{bucket_name}")
-async def delete_bucket(bucket_name: str, username: str = Depends(verify_credentials)):
+async def delete_bucket(bucket_name: str, force: bool = Query(False, description="Force deletion of the bucket even if it contains objects"), username: str = Depends(verify_credentials)):
     """Delete a bucket
     
     Similar to the S3 DeleteBucket operation. Deletes a bucket if it exists and is empty.
@@ -328,19 +343,33 @@ async def delete_bucket(bucket_name: str, username: str = Depends(verify_credent
     if not bucket_exists(bucket_name):
         raise HTTPException(status_code=404, detail=f"Bucket {bucket_name} not found")
     
-    # Check if bucket contains any objects (excluding metadata files)
+    # Check if bucket contains any objects (excluding metadata files and directory markers)
     has_objects = False
     for filename in os.listdir(bucket_path):
-        # Skip metadata files when checking if bucket is empty
-        if not filename.endswith('.metadata'):
+        # Skip metadata files and directory markers when checking if bucket is empty
+        if not filename.endswith('.metadata') and not filename.endswith('.directory'):
             has_objects = True
             break
     
-    if has_objects:
+    if has_objects and not force:
         raise HTTPException(
             status_code=409, 
-            detail=f"Bucket {bucket_name} cannot be deleted because it still contains objects. Delete all objects from the bucket first before attempting to delete the bucket."
+            detail=f"Bucket {bucket_name} cannot be deleted because it still contains objects. Delete all objects from the bucket first before attempting to delete the bucket, or use force=true."
         )
+        
+    # If force is True, recursively delete all contents
+    if force:
+        import shutil
+        # Instead of deleting individual files, use shutil.rmtree for the entire bucket
+        try:
+            for item in os.listdir(bucket_path):
+                item_path = os.path.join(bucket_path, item)
+                if os.path.isfile(item_path):
+                    os.remove(item_path)
+                elif os.path.isdir(item_path):
+                    shutil.rmtree(item_path)
+        except Exception as e:
+            print(f"Warning: Error during forced cleanup: {e}")
     
     # Delete all files in the bucket (including metadata files)
     for filename in os.listdir(bucket_path):
@@ -350,7 +379,67 @@ async def delete_bucket(bucket_name: str, username: str = Depends(verify_credent
     
     # Delete the bucket directory
     os.rmdir(bucket_path)
-    return {"message": f"Bucket {bucket_name} deleted successfully"}
+    return {"message": f"Bucket {bucket_name} deleted successfully", "force_applied": force}
+
+# ============================================================================
+# DIRECTORY OPERATIONS
+# ============================================================================
+
+@app.post("/buckets/{bucket_name}/directories", status_code=201)
+async def create_directory(
+    bucket_name: str, 
+    directory_path: str = Query(..., description="Path for the directory to create (should end with '/')."),
+    username: str = Depends(verify_credentials)
+):
+    """Create a directory in a bucket
+    
+    Creates a directory marker in the bucket. In S3's flat namespace, this is
+    implemented by creating an empty file with a trailing slash in the name.
+    
+    Args:
+        bucket_name: The target bucket name
+        directory_path: The path for the directory (should end with '/')
+        username: The authenticated username (from dependency)
+        
+    Returns:
+        Directory creation confirmation with 201 Created status
+        
+    Raises:
+        HTTPException: 404 if bucket doesn't exist
+    """
+    # Verify bucket exists
+    if not bucket_exists(bucket_name):
+        raise HTTPException(status_code=404, detail=f"Bucket {bucket_name} not found")
+    
+    # Ensure the path ends with a slash
+    if not directory_path.endswith('/'):
+        directory_path += '/'
+    
+    # Create the directory path
+    bucket_path = get_bucket_path(bucket_name)
+    dir_parts = directory_path.strip('/').split('/')
+    
+    current_path = bucket_path
+    for part in dir_parts:
+        if part:
+            current_path = os.path.join(current_path, part)
+            if not os.path.exists(current_path):
+                os.makedirs(current_path, exist_ok=True)
+    
+    # Create a directory marker file to indicate this is a directory
+    marker_file = os.path.join(bucket_path, directory_path, ".directory")
+    os.makedirs(os.path.dirname(marker_file), exist_ok=True)
+    
+    with open(marker_file, 'w') as f:
+        pass  # Create an empty file as directory marker
+    
+    now = datetime.now().isoformat()
+    
+    return {
+        "message": f"Directory '{directory_path}' created successfully in bucket '{bucket_name}'",
+        "directory": directory_path,
+        "creation_date": now
+    }
 
 # ============================================================================
 # OBJECT OPERATIONS
@@ -389,11 +478,38 @@ async def upload_object(
     object_key = file.filename
     object_path = get_object_path(bucket_name, object_key)
     
+    # Check if this is an S3-style directory marker (object key with trailing slash and empty content)
+    is_directory_marker = object_key.endswith('/')
+    
     # Save the file to the filesystem
     try:
-        with open(object_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        print(f"DEBUG: Successfully saved object '{object_key}' to bucket '{bucket_name}'")
+        # Handle S3-style directory marker
+        if is_directory_marker:
+            # For S3-style directory markers, we need to create the directory structure
+            # Extract the directory path - for a key with trailing slash, this is the entire key
+            dir_path = os.path.join(get_bucket_path(bucket_name), object_key.rstrip('/'))
+            
+            # Create the directory structure
+            os.makedirs(dir_path, exist_ok=True)
+            
+            # Create a .directory marker file in the directory
+            directory_marker_path = os.path.join(dir_path, ".directory")
+            with open(directory_marker_path, "w") as f:
+                f.write(f"S3-style directory marker created on {datetime.now()}")
+            
+            # For S3 compatibility, we don't create an actual file for directory markers
+            # Instead, we'll use the directory_marker_path as the object_path for metadata purposes
+            object_path = directory_marker_path
+            print(f"DEBUG: Created S3-style directory marker at '{dir_path}'")
+            
+            # Skip the file creation step since this is a directory marker
+            
+            print(f"DEBUG: Successfully created S3-style directory marker '{object_key}' in bucket '{bucket_name}'")
+        else:
+            # Regular file object
+            with open(object_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+            print(f"DEBUG: Successfully saved object '{object_key}' to bucket '{bucket_name}'")
     except Exception as e:
         print(f"DEBUG: Error saving object file: {e}")
         raise HTTPException(
@@ -481,35 +597,62 @@ async def list_objects(
         print(f"DEBUG: Error listing files: {e}")
         return ObjectList(objects=[])
     
-    # Scan the bucket directory for files
-    for object_name in all_files:
-        object_path = os.path.join(bucket_path, object_name)
-        print(f"DEBUG: Processing file: {object_name} at {object_path}")
-        
-        # Skip metadata sidecar files
-        if object_name.endswith('.metadata'):
-            print(f"DEBUG: Skipping metadata file: {object_name}")
-            continue
+    # Function to walk through directory and find all objects
+    def scan_directory(current_path, current_prefix=""):
+        items = os.listdir(current_path)
+        for item_name in items:
+            item_path = os.path.join(current_path, item_name)
             
-        # Filter by prefix if provided (simulates S3's directory-like structure)
-        if prefix and not object_name.startswith(prefix):
-            print(f"DEBUG: Skipping file not matching prefix '{prefix}': {object_name}")
-            continue
+            # Skip metadata sidecar files
+            if item_name.endswith('.metadata'):
+                print(f"DEBUG: Skipping metadata file: {item_name}")
+                continue
             
-        # Only include files, not directories
-        if os.path.isfile(object_path):
-            # Get metadata from filesystem
-            last_modified = datetime.fromtimestamp(os.path.getmtime(object_path))
-            size = os.path.getsize(object_path)
+            # Skip .directory marker files (internal use)
+            if item_name == '.directory':
+                print(f"DEBUG: Skipping directory marker file")
+                continue
             
-            # Create object metadata
-            objects.append(Object(
-                key=object_name,
-                size=size,
-                last_modified=last_modified
-                # Note: We don't have stored content_type information
-                # A real implementation would store this during upload
-            ))
+            # For files, add them to the objects list
+            if os.path.isfile(item_path):
+                # Build the relative key path
+                key = item_name if not current_prefix else f"{current_prefix}{item_name}"
+                
+                # Filter by prefix if provided
+                if prefix and not key.startswith(prefix):
+                    print(f"DEBUG: Skipping file not matching prefix '{prefix}': {key}")
+                    continue
+                
+                # Get metadata from filesystem
+                last_modified = datetime.fromtimestamp(os.path.getmtime(item_path))
+                size = os.path.getsize(item_path)
+                
+                print(f"DEBUG: Adding file to results: {key}")
+                
+                # Create object metadata
+                objects.append(Object(
+                    key=key,
+                    size=size,
+                    last_modified=last_modified
+                ))
+            
+            # For directories, traverse into them unless they're hidden
+            elif os.path.isdir(item_path) and not item_name.startswith('.'):
+                # Build new prefix for this directory
+                dir_prefix = f"{current_prefix}{item_name}/"
+                
+                # If a prefix filter is specified and this directory doesn't match, skip it
+                if prefix and not dir_prefix.startswith(prefix) and not prefix.startswith(dir_prefix):
+                    print(f"DEBUG: Skipping directory not matching prefix '{prefix}': {dir_prefix}")
+                    continue
+                
+                print(f"DEBUG: Scanning subdirectory: {dir_prefix}")
+                
+                # Recursively scan the subdirectory
+                scan_directory(item_path, dir_prefix)
+    
+    # Start scanning from the bucket root
+    scan_directory(bucket_path)
     
     return ObjectList(objects=objects)
 
@@ -634,6 +777,57 @@ async def get_object_metadata(
         "metadata": metadata
     }
 
+@app.get("/buckets/{bucket_name}/object")
+async def download_object_query(
+    bucket_name: str, 
+    object_key: str = Query(..., description="The key (path) of the object to download"),
+    username: str = Depends(verify_credentials)
+):
+    """Download an object from a bucket using query parameters
+    
+    Similar to the S3 GetObject operation but uses query parameters to handle keys with slashes.
+    Returns the contents of an object as a file download with the appropriate content disposition headers.
+    
+    Args:
+        bucket_name: The bucket containing the object
+        object_key: The key (filename) of the object to download
+        username: The authenticated username (from dependency)
+        
+    Returns:
+        FileResponse with the object's contents
+        
+    Raises:
+        HTTPException: 404 if bucket or object doesn't exist
+    """
+    # Verify bucket exists
+    if not bucket_exists(bucket_name):
+        raise HTTPException(status_code=404, detail=f"Bucket '{bucket_name}' not found. Please ensure the bucket exists and try again.")
+    
+    object_path = get_object_path(bucket_name, object_key)
+    
+    # Verify object exists
+    if not object_exists(bucket_name, object_key):
+        raise HTTPException(status_code=404, detail=f"Object '{object_key}' not found in bucket '{bucket_name}'. Please ensure the object exists and try again.")
+    
+    # Return file as a download response with appropriate headers
+    try:
+        # Log download attempt
+        print(f"DEBUG: Attempting to download object '{object_key}' from bucket '{bucket_name}'")
+        
+        # Check if file is readable before returning
+        if not os.access(object_path, os.R_OK):
+            raise PermissionError(f"Object file exists but is not readable: {object_path}")
+            
+        # FastAPI will automatically set Content-Type based on the file extension
+        print(f"DEBUG: Successfully serving download for '{object_key}'")
+        return FileResponse(path=object_path, filename=object_key)
+    except Exception as e:
+        print(f"ERROR: Failed to serve file '{object_key}': {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to download object '{object_key}' from bucket '{bucket_name}': {str(e)}"
+        )
+
 @app.get("/buckets/{bucket_name}/objects/{object_key}")
 async def download_object(
     bucket_name: str, 
@@ -685,10 +879,10 @@ async def download_object(
             detail=f"Failed to download object '{object_key}' from bucket '{bucket_name}': {str(e)}"
         )
 
-@app.delete("/buckets/{bucket_name}/objects/{object_key}")
+@app.delete("/buckets/{bucket_name}/objects")
 async def delete_object(
     bucket_name: str, 
-    object_key: str,
+    object_key: str = Query(..., description="The key (path) of the object to delete"),
     username: str = Depends(verify_credentials)
 ):
     """Delete an object from a bucket
